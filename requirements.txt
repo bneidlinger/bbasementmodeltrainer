@@ -1,0 +1,52 @@
+# Dear PyGui PyTorch Trainer - Requirements for Windows
+
+# -----------------------------------------------------------------------------
+# Core Application & GUI
+# -----------------------------------------------------------------------------
+# For the main application window and widgets
+dearpygui==1.*
+
+# For packaging the application into a single executable
+pyinstaller==6.*
+
+# -----------------------------------------------------------------------------
+# Data Handling
+# -----------------------------------------------------------------------------
+# Used for handling tabular datasets (e.g., from Kaggle, UCI)
+# and for convenient data manipulation.
+pandas==2.*
+
+# Used by some dataset loaders (e.g., OpenML)
+scikit-learn==1.5.*
+
+# -----------------------------------------------------------------------------
+# Networking & API Access
+# -----------------------------------------------------------------------------
+# For downloading datasets from various sources
+requests==2.*
+
+# -----------------------------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------------------------
+# For numerical operations
+numpy==1.*
+
+# For file hashing (dataset verification)
+# (built-in hashlib is sufficient, no extra package needed)
+
+# -----------------------------------------------------------------------------
+# PyTorch (Machine Learning)
+# -----------------------------------------------------------------------------
+# IMPORTANT: PyTorch installation requires special handling for GPU support.
+# Do NOT just run "pip install -r requirements.txt" for PyTorch.
+#
+# For GPU (CUDA) support:
+# 1. First check your CUDA version: nvidia-smi
+# 2. Visit https://pytorch.org/get-started/locally/
+# 3. Use the appropriate command, e.g.:
+#    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# For CPU-only installation, uncomment the lines below:
+# torch==2.*
+# torchvision==0.*
+# torchaudio==2.*

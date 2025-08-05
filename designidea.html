@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dear PyGui PyTorch Trainer – Design Document</title>
+<style>
+ body { font-family: system-ui, sans-serif; line-height: 1.5; max-width: 800px; margin: 2rem auto; background:#0f172a; color:#e2e8f0; }
+ h1, h2, h3 { color: #2dd4bf; }
+ a { color:#7dd3fc; }
+ table { width:100%; border-collapse:collapse; margin-bottom:1rem; }
+ th, td { border:1px solid #334155; padding:0.4rem 0.6rem; text-align:left; }
+ th { background:#1e293b; }
+ code { background:#1e293b; padding:0.1rem 0.3rem; border-radius:4px; color:#fca5a5; }
+ section { margin-bottom:2rem; }
+ pre { background:#1e293b; color:#cbd5e1; padding:1rem; overflow-x:auto; border-radius:6px; }
+ footer { font-size:0.9rem; color:#64748b; }
+</style>
+</head>
+<body>
+<h1>Dear PyGui PyTorch Trainer – Lightweight Desktop App</h1>
+
+<section>
+<h2>1. Objectives</h2>
+<ul>
+ <li>Provide a single‑file desktop GUI that lets beginners load a dataset, pick a starter model (e.g. <code>ResNet18</code> or <code>MLP</code>), set hyper‑parameters, and kick off a training run.</li>
+ <li>Show real‑time training metrics (loss / accuracy) and GPU utilisation without freezing the UI.</li>
+ <li>Persist experiment metadata to an embedded SQLite database so users can review past runs.</li>
+ <li>Package everything with <code>PyInstaller</code> for easy distribution.</li>
+</ul>
+</section>
+
+<section>
+<h2>2. Tech Stack</h2>
+<table>
+<tr><th>Layer</th><th>Choice</th><th>Reason</th></tr>
+<tr><td>GUI</td><td>Dear PyGui v1.x</td><td>GPU‑accelerated immediate‑mode widgets, tiny binary, MIT licence</td></tr>
+<tr><td>ML</td><td>PyTorch 2.x</td><td>Industry‑standard, beginner‑friendly, CUDA out of the box</td></tr>
+<tr><td>Data</td><td>SQLite (through <a href="https://docs.python.org/3/library/sqlite3.html">sqlite3</a>)</td><td>Zero‑config, file‑based, ACID; perfect for local experiment logs</td></tr>
+<tr><td>Plots</td><td>Dear PyGui line series</td><td>Runs on the same GPU context → very fast</td></tr>
+<tr><td>Concurrency</td><td><code>multiprocessing</code> + <code>Queue</code></td><td>Isolates the training loop from the GUI; avoids GIL/CUDA clashes</td></tr>
+</table>
+</section>
+
+<section>
+<h2>3. High‑Level Architecture</h2>
+<pre>
+┌─────────────┐      Queue      ┌────────────────┐
+│ Dear PyGui  │◄───────────────►│ Training Worker│
+│  MainLoop   │                │  (PyTorch)     │
+└─────┬───────┘                └────────────────┘
+      │  writes                               ▲
+      │  SQLite INSERT                        │
+┌─────▼────────┐                       GPU/CPU│
+│ experiments.db│<────────────────────────────┘
+└───────────────┘
+</pre>
+<p>The GUI spawns a <code>Process</code> that executes <code>train_loop(cfg, queue)</code>. The worker pushes dict messages such as <code>{"type": "metric", "epoch": 1, "loss": 0.65, "acc": 72.3}</code>. The main thread polls the queue every 100 ms via <code>dpg.set_render_callback</code> and updates widgets.</p>
+</section>
+
+<section>
+<h2>4. User Interface Layout</h2>
+<ul>
+<li><strong>Left Pane – Configuration</strong>
+  <ul>
+    <li>Dataset path (file dialog)</li>
+    <li>Model dropdown</li>
+    <li>Epochs (int), Batch size (int), Learning rate (float)</li>
+    <li><em>Start</em> button</li>
+    <li><em>Stop</em> button (sends terminate flag)</li>
+  </ul>
+</li>
+<li><strong>Right Pane – Live Metrics</strong>
+  <ul>
+    <li>Progress bar (epoch / total)</li>
+    <li>Loss / accuracy plot</li>
+    <li>GPU mem bar + util %</li>
+    <li>Scrollable log console</li>
+  </ul>
+</li>
+</ul>
+</section>
+
+<section>
+<h2>5. Database Schema</h2>
+<pre>
+CREATE TABLE runs (
+  id INTEGER PRIMARY KEY,
+  timestamp TEXT DEFAULT (datetime('now')),
+  model TEXT,
+  epochs INTEGER,
+  batch_size INTEGER,
+  lr REAL,
+  train_loss REAL,
+  val_loss REAL,
+  val_acc REAL,
+  notes TEXT
+);
+</pre>
+<p>Each epoch metric can optionally go into a separate <code>epochs</code> table if you want per‑epoch history.</p>
+</section>
+
+<section>
+<h2>6. Minimal File Tree</h2>
+<pre>
+trainer/
+├── app.py          # Dear PyGui GUI
+├── train_worker.py # PyTorch loop
+├── db.py           # tiny SQLite helper
+├── assets/         # optional icons
+└── requirements.txt
+</pre>
+</section>
+
+<section>
+<h2>7. Next Steps</h2>
+<ol>
+<li>Stub out <code>db.py</code> with init and insert functions.</li>
+<li>Implement <code>train_worker.train_loop(cfg, queue)</code>.</li>
+<li>Wire Dear PyGui callbacks to spawn the worker and poll metrics.</li>
+<li>Add a <em>Run History</em> modal that queries SQLite and displays past results.</li>
+<li>Bundle with <code>pyinstaller --onefile app.py</code>.</li>
+</ol>
+</section>
+
+<footer>
+<p style="text-align:center;">© 2025 Brando Labs. Made with 🤖 &amp; ☕</p>
+</footer>
+</body>
+</html>

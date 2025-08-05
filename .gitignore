@@ -1,0 +1,113 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+venv/
+Scripts/
+Include/
+Lib/
+pyvenv.cfg
+
+# PyTorch Models
+*.pth
+*.pt
+saved_models/
+checkpoints/
+runs/
+
+# Datasets
+data/cache/
+data/downloads/
+*.tar.gz
+*.zip
+MNIST/
+CIFAR*/
+FashionMNIST/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+*.out
+*.err
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Documentation
+docs/_build/
+site/
+
+# Package files
+*.tar
+*.gz
+*.bz2
+*.xz
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+.cache/
+
+# Screenshots and images for testing
+screenshot.png
+test_image.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# PyInstaller
+*.spec
+dist/
+build/
+
+# Other
+.env
+.env.local
+secrets.json
+config.local.json

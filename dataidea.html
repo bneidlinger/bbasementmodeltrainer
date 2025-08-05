@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dear PyGui Trainer – Data Pipeline & Acquisition Blueprint</title>
+<style>
+ body{font-family:system-ui,sans-serif;line-height:1.5;max-width:900px;margin:2rem auto;background:#0f172a;color:#e2e8f0}
+ h1,h2,h3{color:#38bdf8}
+ a{color:#7dd3fc}
+ table{width:100%;border-collapse:collapse;margin:1rem 0}
+ th,td{border:1px solid #334155;padding:0.4rem 0.6rem;text-align:left}
+ th{background:#1e293b}
+ code{background:#1e293b;color:#fca5a5;padding:0 0.25rem;border-radius:4px}
+ pre{background:#1e293b;color:#cbd5e1;padding:1rem;border-radius:6px;overflow-x:auto}
+ section{margin-bottom:2rem}
+ footer{font-size:0.9rem;color:#64748b;text-align:center}
+</style>
+</head>
+<body>
+<h1>Data Acquisition & Pipeline Architecture</h1>
+<p><em>Companion document to <strong>Dear PyGui PyTorch Trainer</strong>. Focus: how the app discovers, downloads, caches, and serves datasets to the training worker.</em></p>
+
+<section>
+<h2>1. Key Objectives</h2>
+<ul>
+<li><strong>One-click import</strong> for popular public datasets (CIFAR-10, IMDB, OpenML, Kaggle, UCI).</li>
+<li><strong>Offline-friendly caching</strong>: avoid re-downloads; enable repeated experiments on airplanes or flaky field links.</li>
+<li><strong>Uniform API</strong>: every dataset returns a PyTorch <code>Dataset</code> object or a Pandas <code>DataFrame</code>.</li>
+<li><strong>Metadata logging</strong>: store dataset name, version/hash, row count in SQLite alongside run metrics.</li>
+<li><strong>Extensible</strong>: users can drop custom loaders into <code>plugins/</code> without editing core code.</li>
+</ul>
+</section>
+
+<section>
+<h2>2. Module Layout</h2>
+<pre>
+trainer/
+├── data/
+│   ├── cache/           # downloaded archives extracted here
+│   ├── __init__.py      # import helpers
+│   ├── core.py          # BaseDataset, registry, cache helpers
+│   ├── builtin.py       # CIFAR-10, IMDB, Titanic, ...
+│   └── plugins/         # user-contributed loaders auto-discovered
+└── app.py
+</pre>
+</section>
+
+<section>
+<h2>3. Loader Registry Pattern</h2>
+<pre><code class="language-python"># data/core.py
+registry = {}
+
+def register(name):
+    def deco(fn):
+        registry[name] = fn
+        return fn
+    return deco
+
+def get_loader(name):
+    return registry[name]
+</code></pre>
+<p>Add new loader:</p>
+<pre><code class="language-python"># data/builtin.py
+from .core import register
+from torchvision.datasets import CIFAR10, transforms
+
+@register("CIFAR-10")
+def cifar10(root="data/cache"):
+    tfm = transforms.ToTensor()
+    ds = CIFAR10(root, download=True, transform=tfm)
+    return ds, {"rows": len(ds), "license": "MIT"}
+</code></pre>
+</section>
+
+<section>
+<h2>4. Caching & Versioning Strategy</h2>
+<table>
+<tr><th>Step</th><th>Description</th></tr>
+<tr><td>Hash archive</td><td>SHA-1 computed after download; stored as <code>&lt;name&gt;_&lt;hash&gt;</code> folder.</td></tr>
+<tr><td>Metadata JSON</td><td><code>meta.json</code> in dataset root keeps source URL, rows, features.</td></tr>
+<tr><td>SQLite table <code>datasets</code></td><td>One row per unique hash: name, path, rows, license, downloaded_at.</td></tr>
+</table>
+</section>
+
+<section>
+<h2>5. Data Flow Diagram</h2>
+<pre>
+┌─────────────GUI────────────┐
+│ User selects "IMDB"        │
+└─────────────┬──────────────┘
+              │ call get_loader("IMDB")
+┌─────────────▼──────────────┐
+│ data.core.get_loader       │
+└─────────────┬──────────────┘
+              │ returns loader func
+┌─────────────▼──────────────┐
+│ Loader checks cache        │
+│  • if missing → download   │
+│  • if present → load files │
+└─────────────┬──────────────┘
+              │ outputs (Dataset, meta)
+┌─────────────▼──────────────┐
+│ Training worker receives   │
+└────────────────────────────┘
+</pre>
+</section>
+
+<section>
+<h2>6. SQLite Extensions</h2>
+<pre>
+ALTER TABLE runs ADD COLUMN dataset_id INTEGER;
+
+CREATE TABLE datasets (
+  id INTEGER PRIMARY KEY,
+  name TEXT,
+  sha1 TEXT,
+  rows INTEGER,
+  license TEXT,
+  path TEXT,
+  downloaded_at TEXT DEFAULT (datetime('now'))
+);
+</pre>
+</section>
+
+<section>
+<h2>7. Plugin Discovery</h2>
+<p>On <code>trainer start-up</code>:</p>
+<ol>
+<li>Walk <code>data/plugins/*.py</code>.</li>
+<li><code>importlib.import_module</code> each file (they must call <code>@register</code>).</li>
+<li>Populate the GUI dataset dropdown with <code>registry.keys()</code>.</li>
+</ol>
+</section>
+
+<section>
+<h2>8. Security & Licensing Notes</h2>
+<ul>
+<li>Add a <em>“I agree”</em> checkbox when downloading any dataset whose license ≠ public domain.</li>
+<li>Warn if dataset > 1 GB and user disk space &lt; 5 GB free.</li>
+<li>Use <code>urllib.request</code> with HTTPS and verify SSL certs.</li>
+</ul>
+</section>
+
+<section>
+<h2>9. Quick-Start Code Snippet</h2>
+<pre><code class="language-python">from data.core import get_loader
+
+ds, meta = get_loader("CIFAR-10")()
+print("Loaded", meta["rows"], "images – ready for training!")
+</code></pre>
+</section>
+
+<section>
+<h2>10. Next Steps</h2>
+<ul>
+<li>Implement hash-based cache invalidation.</li>
+<li>Create loaders for <code>MNIST</code>, <code>Fashion-MNIST</code>, <code>Wine Reviews</code> (Kaggle).</li>
+<li>Integrate disk space check into GUI.</li>
+<li>Add Indonesian tooltips: <code>"Unduh dataset"</code>, <code>"Ukuran file"</code>.</li>
+</ul>
+</section>
+
+<footer>
+<p>© 2025 Brando Labs – <span style="color:#38bdf8">Selamat ngoding!</span></p>
+</footer>
+</body>
+</html>
