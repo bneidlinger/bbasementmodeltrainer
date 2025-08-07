@@ -16,6 +16,8 @@ from train_worker import train_loop
 from models import MODEL_REGISTRY
 from data.core import DATASET_REGISTRY
 from test_ui import TestingUI
+from model_comparison_ui import ModelComparisonUI
+from llm_ui import LLMTrainingUI
 from retro_theme import create_retro_theme, create_button_themes, COLORS
 from ascii_blocks import ASCII_BOLD_BLOCKS, ASCII_MATRIX_BLOCKS, ASCII_PRO_BLOCKS
 
@@ -47,7 +49,11 @@ class ModelBuilderApp:
             'progress_bar': 'progress_bar',
             'status_text': 'status_text',
             'loss_plot': 'loss_plot',
+            'loss_x_axis': 'main_loss_x_axis',
+            'loss_y_axis': 'main_loss_y_axis',
             'acc_plot': 'acc_plot',
+            'acc_x_axis': 'main_acc_x_axis',
+            'acc_y_axis': 'main_acc_y_axis',
             'train_loss_series': 'train_loss_series',
             'val_loss_series': 'val_loss_series',
             'val_acc_series': 'val_acc_series',
@@ -93,6 +99,16 @@ class ModelBuilderApp:
                     with dpg.tab(label="* TESTING"):
                         self.testing_ui = TestingUI(self)
                         self.testing_ui.create_ui(dpg.last_item())
+                    
+                    # Comparison tab
+                    with dpg.tab(label="[] COMPARE"):
+                        self.comparison_ui = ModelComparisonUI(self)
+                        self.comparison_ui.create_ui(dpg.last_item())
+                    
+                    # LLM tab
+                    with dpg.tab(label="@ LLM LAB"):
+                        self.llm_ui = LLMTrainingUI(self)
+                        self.llm_ui.create_ui(dpg.last_item())
         
         # Set up viewport
         dpg.create_viewport(title="B's BasementBrewAI - Industrial ML Terminal v1.0", width=1300, height=900)
@@ -225,26 +241,26 @@ class ModelBuilderApp:
                     # Create plots
                     with dpg.plot(label="Loss", height=250, width=-1, tag=self.tags['loss_plot']):
                         dpg.add_plot_legend()
-                        dpg.add_plot_axis(dpg.mvXAxis, label="Epoch")
-                        dpg.add_plot_axis(dpg.mvYAxis, label="Loss", tag="loss_y_axis")
+                        dpg.add_plot_axis(dpg.mvXAxis, label="Epoch", tag=self.tags['loss_x_axis'])
+                        dpg.add_plot_axis(dpg.mvYAxis, label="Loss", tag=self.tags['loss_y_axis'])
                         
                         dpg.add_line_series([], [], 
                                           label="Train Loss",
-                                          parent="loss_y_axis",
+                                          parent=self.tags['loss_y_axis'],
                                           tag=self.tags['train_loss_series'])
                         dpg.add_line_series([], [], 
                                           label="Val Loss",
-                                          parent="loss_y_axis",
+                                          parent=self.tags['loss_y_axis'],
                                           tag=self.tags['val_loss_series'])
                     
                     with dpg.plot(label="Validation Accuracy", height=250, width=-1, tag=self.tags['acc_plot']):
                         dpg.add_plot_legend()
-                        dpg.add_plot_axis(dpg.mvXAxis, label="Epoch")
-                        dpg.add_plot_axis(dpg.mvYAxis, label="Accuracy (%)", tag="acc_y_axis")
+                        dpg.add_plot_axis(dpg.mvXAxis, label="Epoch", tag=self.tags['acc_x_axis'])
+                        dpg.add_plot_axis(dpg.mvYAxis, label="Accuracy (%)", tag=self.tags['acc_y_axis'])
                         
                         dpg.add_line_series([], [],
                                           label="Val Accuracy",
-                                          parent="acc_y_axis",
+                                          parent=self.tags['acc_y_axis'],
                                           tag=self.tags['val_acc_series'])
                     
                     dpg.add_separator()
@@ -530,6 +546,7 @@ class ModelBuilderApp:
                 dpg.add_table_column(label="Epochs")
                 dpg.add_table_column(label="Status")
                 dpg.add_table_column(label="Best Val Acc")
+                dpg.add_table_column(label="Action")  # New column for kill button
                 
                 # Add rows
                 for run in runs:
@@ -553,8 +570,252 @@ class ModelBuilderApp:
                             dpg.add_text(f"{best_acc*100:.2f}%")
                         else:
                             dpg.add_text("N/A")
+                        
+                        # Add kill button for running processes
+                        if status == 'running':
+                            dpg.add_button(
+                                label="[X] KILL",
+                                callback=lambda s, a, u: self.kill_training_run(u),
+                                user_data=run['id'],
+                                small=True
+                            )
+                        else:
+                            dpg.add_text("")  # Empty cell for completed/failed runs
             
-            dpg.add_button(label="Close", callback=lambda: dpg.delete_item("history_modal"))
+            # Button group at the bottom
+            dpg.add_separator()
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Close", callback=lambda: dpg.delete_item("history_modal"))
+                dpg.add_button(label="[R] Refresh", callback=self.refresh_history_table)
+                
+                # Check if there are any stuck runs
+                stuck_runs = [r for r in runs if r['status'] == 'running']
+                if stuck_runs:
+                    dpg.add_button(
+                        label=f"[X] Kill All Stuck ({len(stuck_runs)})",
+                        callback=self.kill_all_stuck_runs,
+                        small=False
+                    )
+    
+    def kill_training_run(self, run_id: int):
+        """Kill a stuck training run with confirmation."""
+        # Show confirmation dialog
+        if dpg.does_item_exist("kill_confirm_modal"):
+            dpg.delete_item("kill_confirm_modal")
+        
+        with dpg.window(label="Confirm Kill", modal=True, tag="kill_confirm_modal",
+                       width=400, height=200, pos=[450, 300]):
+            dpg.add_text(f"Are you sure you want to kill training run #{run_id}?",
+                        color=COLORS['orange_bright'])
+            dpg.add_text("This action cannot be undone!", 
+                        color=(255, 100, 100))
+            dpg.add_spacer(height=20)
+            
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="[X] YES, KILL IT",
+                    callback=lambda: self.confirm_kill_run(run_id),
+                    width=150
+                )
+                dpg.add_button(
+                    label="Cancel",
+                    callback=lambda: dpg.delete_item("kill_confirm_modal"),
+                    width=150
+                )
+    
+    def confirm_kill_run(self, run_id: int):
+        """Actually kill the training run and update database."""
+        try:
+            print(f"Killing run {run_id}...")  # Debug
+            
+            # Update database status FIRST
+            self.db.update_run(run_id, 
+                             status='failed', 
+                             notes='Manually killed by user')
+            print(f"Database updated for run {run_id}")  # Debug
+            
+            # Then check if this is the current running process
+            if hasattr(self, 'current_run_id') and self.current_run_id == run_id:
+                print(f"Killing current process for run {run_id}")  # Debug
+                # Kill the current training process
+                if self.training_process and self.training_process.is_alive():
+                    self.training_process.terminate()
+                    # Don't wait too long
+                    self.training_process.join(timeout=1)
+                    
+                    # Force kill if still alive
+                    if self.training_process.is_alive():
+                        print(f"Force killing process for run {run_id}")  # Debug
+                        self.training_process.kill()
+                
+                # Stop monitoring thread
+                self.is_training = False
+                
+                # Reset GUI
+                dpg.configure_item(self.tags['start_button'], enabled=True)
+                dpg.configure_item(self.tags['stop_button'], enabled=False)
+            
+            # Close confirmation dialog
+            if dpg.does_item_exist("kill_confirm_modal"):
+                dpg.delete_item("kill_confirm_modal")
+            
+            # Refresh the history table
+            self.refresh_history_table()
+            
+            # Show success message
+            dpg.set_value(self.tags['status_text'], 
+                         f"[TERMINATED] Run #{run_id} has been killed")
+            print(f"Successfully killed run {run_id}")  # Debug
+            
+        except Exception as e:
+            print(f"Error killing run {run_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            dpg.set_value(self.tags['status_text'], 
+                         f"Error killing run #{run_id}: {str(e)}")
+    
+    def refresh_history_table(self):
+        """Refresh the training history table."""
+        # Clear and rebuild the table content
+        if dpg.does_item_exist(self.tags['history_table']):
+            dpg.delete_item(self.tags['history_table'], children_only=True)
+            
+            # Get fresh data
+            runs = self.db.get_runs(limit=20)
+            
+            if runs:
+                # Rebuild table columns
+                dpg.add_table_column(label="ID", parent=self.tags['history_table'])
+                dpg.add_table_column(label="Timestamp", parent=self.tags['history_table'])
+                dpg.add_table_column(label="Model", parent=self.tags['history_table'])
+                dpg.add_table_column(label="Dataset", parent=self.tags['history_table'])
+                dpg.add_table_column(label="Epochs", parent=self.tags['history_table'])
+                dpg.add_table_column(label="Status", parent=self.tags['history_table'])
+                dpg.add_table_column(label="Best Val Acc", parent=self.tags['history_table'])
+                dpg.add_table_column(label="Action", parent=self.tags['history_table'])
+                
+                # Rebuild rows
+                for run in runs:
+                    with dpg.table_row(parent=self.tags['history_table']):
+                        dpg.add_text(str(run['id']))
+                        dpg.add_text(run['timestamp'][:16])
+                        dpg.add_text(run['model'])
+                        dpg.add_text(run['dataset'])
+                        dpg.add_text(str(run['epochs']))
+                        
+                        # Status with color
+                        status = run['status']
+                        color = (100, 255, 100) if status == 'completed' else \
+                               (255, 100, 100) if status == 'failed' else \
+                               (255, 255, 100)
+                        dpg.add_text(status, color=color)
+                        
+                        # Best validation accuracy
+                        best_acc = run.get('best_val_acc')
+                        if best_acc is not None:
+                            dpg.add_text(f"{best_acc*100:.2f}%")
+                        else:
+                            dpg.add_text("N/A")
+                        
+                        # Add kill button for running processes
+                        if status == 'running':
+                            dpg.add_button(
+                                label="[X] KILL",
+                                callback=lambda s, a, u: self.kill_training_run(u),
+                                user_data=run['id'],
+                                small=True
+                            )
+                        else:
+                            dpg.add_text("")
+    
+    def kill_all_stuck_runs(self):
+        """Kill all stuck training runs at once."""
+        # Get all running runs
+        stuck_runs = self.db.get_runs(status='running')
+        
+        if not stuck_runs:
+            return
+        
+        # Show confirmation dialog
+        if dpg.does_item_exist("kill_all_confirm_modal"):
+            dpg.delete_item("kill_all_confirm_modal")
+        
+        with dpg.window(label="Confirm Kill All", modal=True, tag="kill_all_confirm_modal",
+                       width=450, height=250, pos=[425, 275]):
+            dpg.add_text(f"⚠️ Kill ALL {len(stuck_runs)} stuck training runs?",
+                        color=COLORS['orange_bright'])
+            dpg.add_separator()
+            
+            # List the runs that will be killed
+            dpg.add_text("The following runs will be terminated:", 
+                        color=COLORS['green_normal'])
+            for run in stuck_runs[:5]:  # Show first 5
+                dpg.add_text(f"  • Run #{run['id']}: {run['model']} on {run['dataset']}", 
+                           color=(200, 200, 200))
+            if len(stuck_runs) > 5:
+                dpg.add_text(f"  ... and {len(stuck_runs) - 5} more", 
+                           color=(200, 200, 200))
+            
+            dpg.add_spacer(height=10)
+            dpg.add_text("This action cannot be undone!", 
+                        color=(255, 100, 100))
+            dpg.add_spacer(height=10)
+            
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="[X] KILL ALL",
+                    callback=lambda: self.confirm_kill_all_runs(stuck_runs),
+                    width=150
+                )
+                dpg.add_button(
+                    label="Cancel",
+                    callback=lambda: dpg.delete_item("kill_all_confirm_modal"),
+                    width=150
+                )
+    
+    def confirm_kill_all_runs(self, stuck_runs):
+        """Actually kill all stuck runs."""
+        killed_count = 0
+        
+        for run in stuck_runs:
+            try:
+                run_id = run['id']
+                
+                # Check if this is the current running process
+                if hasattr(self, 'current_run_id') and self.current_run_id == run_id:
+                    # Kill the current training process
+                    if self.training_process and self.training_process.is_alive():
+                        self.training_process.terminate()
+                        self.training_process.join(timeout=1)
+                        if self.training_process.is_alive():
+                            self.training_process.kill()
+                    
+                    # Stop monitoring
+                    self.is_training = False
+                    
+                    # Reset GUI
+                    dpg.configure_item(self.tags['start_button'], enabled=True)
+                    dpg.configure_item(self.tags['stop_button'], enabled=False)
+                
+                # Update database
+                self.db.update_run(run_id, 
+                                 status='failed',
+                                 notes='Batch killed - stuck process')
+                killed_count += 1
+                
+            except Exception as e:
+                print(f"Error killing run {run['id']}: {e}")
+        
+        # Close confirmation dialog
+        if dpg.does_item_exist("kill_all_confirm_modal"):
+            dpg.delete_item("kill_all_confirm_modal")
+        
+        # Refresh history table
+        self.refresh_history_table()
+        
+        # Show success message
+        dpg.set_value(self.tags['status_text'], 
+                     f"[TERMINATED] Killed {killed_count} stuck training runs")
     
     def show_training_complete_modal(self, message):
         """Show modal dialog when training completes with options to save or delete model."""

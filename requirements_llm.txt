@@ -1,0 +1,37 @@
+# LLM Training Requirements for BasementBrewAI
+# Install with: pip install -r requirements_llm.txt
+
+# Core LLM libraries
+transformers>=4.35.0
+datasets>=2.14.0
+accelerate>=0.24.0
+peft>=0.6.0  # For QLoRA
+bitsandbytes>=0.41.0  # For 4-bit quantization
+
+# Tokenizers
+sentencepiece>=0.1.99
+tokenizers>=0.14.0
+
+# Data scraping
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+newspaper3k>=0.2.8
+praw>=7.7.0  # Reddit API (optional)
+
+# Inference server (optional)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# Utilities
+tqdm>=4.66.0
+scipy>=1.11.0
+
+# For ArXiv scraping
+feedparser>=6.0.10
+
+# Flash attention (optional, for better performance)
+# flash-attn>=2.3.0  # Requires CUDA compilation
+
+# Note: PyTorch should already be installed from main requirements.txt
+# If not, install with:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121

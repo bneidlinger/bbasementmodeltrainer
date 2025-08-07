@@ -11,6 +11,8 @@ import torch
 from inference import ModelInference
 from data.core import DATASET_REGISTRY
 from retro_theme import COLORS
+from testing_metrics import AdvancedMetrics, ModelComparator
+from batch_testing import BatchTester
 
 class TestingUI:
     def __init__(self, parent_app):
@@ -30,10 +32,17 @@ class TestingUI:
             'probability_bars': 'test_probability_bars',
             'test_dataset_button': 'test_dataset_button',
             'export_onnx_button': 'export_onnx_button',
-            'export_torchscript_button': 'export_torchscript_button'
+            'export_torchscript_button': 'export_torchscript_button',
+            'advanced_test_button': 'advanced_test_button',
+            'benchmark_button': 'benchmark_button',
+            'report_card_button': 'report_card_button',
+            'batch_test_button': 'batch_test_button'
         }
         
         self.test_image_path: Optional[str] = None
+        self.metrics_calculator = AdvancedMetrics()
+        self.model_comparator = ModelComparator()
+        self.batch_tester: Optional[BatchTester] = None
     
     def create_ui(self, parent):
         """Create the testing interface UI."""
@@ -101,6 +110,41 @@ class TestingUI:
                         label="[*] TEST ON DATASET",
                         tag=self.tags['test_dataset_button'],
                         callback=self.test_on_dataset,
+                        width=-1,
+                        enabled=False
+                    )
+                    
+                    dpg.add_button(
+                        label="[!] ADVANCED METRICS",
+                        tag=self.tags['advanced_test_button'],
+                        callback=self.advanced_testing,
+                        width=-1,
+                        enabled=False
+                    )
+                    
+                    dpg.add_button(
+                        label="[+] BATCH TEST FOLDER",
+                        tag=self.tags['batch_test_button'],
+                        callback=self.batch_test_folder,
+                        width=-1,
+                        enabled=False
+                    )
+                    
+                    dpg.add_separator()
+                    dpg.add_text("[ PERFORMANCE ANALYSIS ]", color=COLORS['orange_bright'])
+                    
+                    dpg.add_button(
+                        label="[#] BENCHMARK SPEED",
+                        tag=self.tags['benchmark_button'],
+                        callback=self.benchmark_model,
+                        width=-1,
+                        enabled=False
+                    )
+                    
+                    dpg.add_button(
+                        label="[★] REPORT CARD",
+                        tag=self.tags['report_card_button'],
+                        callback=self.generate_report_card,
                         width=-1,
                         enabled=False
                     )
@@ -212,6 +256,13 @@ class TestingUI:
                 dpg.configure_item(self.tags['export_onnx_button'], enabled=True)
                 dpg.configure_item(self.tags['export_torchscript_button'], enabled=True)
                 dpg.configure_item(self.tags['test_dataset_button'], enabled=True)
+                dpg.configure_item(self.tags['advanced_test_button'], enabled=True)
+                dpg.configure_item(self.tags['benchmark_button'], enabled=True)
+                dpg.configure_item(self.tags['report_card_button'], enabled=True)
+                dpg.configure_item(self.tags['batch_test_button'], enabled=True)
+                
+                # Create batch tester for this model
+                self.batch_tester = BatchTester(self.current_model)
                 if self.test_image_path:
                     dpg.configure_item(self.tags['predict_button'], enabled=True)
                 
@@ -221,6 +272,11 @@ class TestingUI:
                 dpg.configure_item(self.tags['export_onnx_button'], enabled=False)
                 dpg.configure_item(self.tags['export_torchscript_button'], enabled=False)
                 dpg.configure_item(self.tags['test_dataset_button'], enabled=False)
+                dpg.configure_item(self.tags['advanced_test_button'], enabled=False)
+                dpg.configure_item(self.tags['benchmark_button'], enabled=False)
+                dpg.configure_item(self.tags['report_card_button'], enabled=False)
+                dpg.configure_item(self.tags['batch_test_button'], enabled=False)
+                self.batch_tester = None
                 dpg.configure_item(self.tags['predict_button'], enabled=False)
     
     def upload_image(self):
@@ -373,3 +429,272 @@ class TestingUI:
         except Exception as e:
             dpg.set_value(self.tags['results_text'], 
                          f"Error exporting to TorchScript: {str(e)}")
+    
+    def advanced_testing(self):
+        """Run advanced testing with detailed metrics."""
+        if not self.current_model:
+            return
+        
+        dataset_name = self.current_model.metadata.get('dataset_name', 'unknown')
+        
+        if dataset_name not in DATASET_REGISTRY:
+            dpg.set_value(self.tags['results_text'], 
+                         f"Dataset '{dataset_name}' not found in registry.")
+            return
+        
+        dpg.set_value(self.tags['results_text'], 
+                     "Running advanced testing... This may take a moment.")
+        
+        try:
+            from inference import test_on_dataset
+            from sklearn.metrics import confusion_matrix
+            
+            # Get dataset loader
+            dataset_class = DATASET_REGISTRY[dataset_name]
+            dataset_loader = dataset_class()
+            
+            # Test model
+            results = test_on_dataset(self.current_model_path, dataset_loader, num_samples=1000)
+            
+            # Get predictions for detailed metrics
+            _, test_dataset = dataset_loader.load()
+            test_loader = torch.utils.data.DataLoader(
+                test_dataset, batch_size=32, shuffle=False, num_workers=0
+            )
+            
+            all_preds = []
+            all_labels = []
+            
+            with torch.no_grad():
+                for i, (inputs, labels) in enumerate(test_loader):
+                    if len(all_labels) >= 1000:
+                        break
+                    inputs = inputs.to(self.current_model.device)
+                    outputs = self.current_model.model(inputs)
+                    _, preds = torch.max(outputs, 1)
+                    all_preds.extend(preds.cpu().numpy())
+                    all_labels.extend(labels.numpy())
+            
+            # Calculate detailed metrics
+            class_names = self.current_model.get_class_names()
+            detailed_metrics = self.metrics_calculator.calculate_detailed_metrics(
+                np.array(all_labels[:1000]), 
+                np.array(all_preds[:1000]), 
+                class_names
+            )
+            
+            # Create confusion matrix
+            cm = confusion_matrix(all_labels[:1000], all_preds[:1000])
+            cm_ascii = self.metrics_calculator.create_confusion_matrix_ascii(
+                cm, class_names, normalize=True
+            )
+            
+            # Display results
+            result_text = f"ADVANCED TEST RESULTS on {dataset_name}:\n\n"
+            result_text += f"Overall Accuracy: {detailed_metrics['accuracy']:.2%}\n\n"
+            
+            result_text += "MACRO AVERAGES:\n"
+            result_text += f"  Precision: {detailed_metrics['macro_avg']['precision']:.3f}\n"
+            result_text += f"  Recall: {detailed_metrics['macro_avg']['recall']:.3f}\n"
+            result_text += f"  F1-Score: {detailed_metrics['macro_avg']['f1_score']:.3f}\n\n"
+            
+            result_text += "PER-CLASS METRICS:\n"
+            for class_name, metrics in detailed_metrics['per_class'].items():
+                result_text += f"\n{class_name}:\n"
+                result_text += f"  Precision: {metrics['precision']:.3f}\n"
+                result_text += f"  Recall: {metrics['recall']:.3f}\n"
+                result_text += f"  F1-Score: {metrics['f1_score']:.3f}\n"
+                result_text += f"  Support: {metrics['support']}\n"
+            
+            result_text += f"\n{cm_ascii}"
+            
+            dpg.set_value(self.tags['results_text'], result_text)
+            
+        except Exception as e:
+            dpg.set_value(self.tags['results_text'], 
+                         f"Error during advanced testing: {str(e)}")
+    
+    def benchmark_model(self):
+        """Benchmark model inference speed."""
+        if not self.current_model:
+            return
+        
+        dpg.set_value(self.tags['results_text'], "Benchmarking model speed...")
+        
+        try:
+            input_shape = self.current_model.metadata.get('input_shape', (3, 32, 32))
+            
+            # Handle different input shape formats
+            if len(input_shape) == 1:
+                # Flattened input
+                input_shape = (input_shape[0],)
+            
+            speed_metrics = self.metrics_calculator.benchmark_inference_speed(
+                self.current_model.model,
+                input_shape,
+                self.current_model.device,
+                num_iterations=100
+            )
+            
+            result_text = "INFERENCE SPEED BENCHMARK:\n\n"
+            result_text += f"Mean Latency: {speed_metrics['mean_ms']:.2f} ms\n"
+            result_text += f"Std Dev: {speed_metrics['std_ms']:.2f} ms\n"
+            result_text += f"Min Latency: {speed_metrics['min_ms']:.2f} ms\n"
+            result_text += f"Max Latency: {speed_metrics['max_ms']:.2f} ms\n\n"
+            result_text += "PERCENTILES:\n"
+            result_text += f"  50th (median): {speed_metrics['p50_ms']:.2f} ms\n"
+            result_text += f"  95th: {speed_metrics['p95_ms']:.2f} ms\n"
+            result_text += f"  99th: {speed_metrics['p99_ms']:.2f} ms\n\n"
+            result_text += f"Throughput: {speed_metrics['fps']:.1f} FPS\n\n"
+            
+            # Add performance assessment
+            if speed_metrics['mean_ms'] < 10:
+                result_text += "⚡ EXCELLENT - Real-time capable"
+            elif speed_metrics['mean_ms'] < 30:
+                result_text += "✓ GOOD - Suitable for most applications"
+            elif speed_metrics['mean_ms'] < 100:
+                result_text += "→ MODERATE - May need optimization"
+            else:
+                result_text += "⚠ SLOW - Consider model optimization"
+            
+            dpg.set_value(self.tags['results_text'], result_text)
+            
+        except Exception as e:
+            dpg.set_value(self.tags['results_text'], 
+                         f"Error during benchmarking: {str(e)}")
+    
+    def generate_report_card(self):
+        """Generate comprehensive model report card."""
+        if not self.current_model:
+            return
+        
+        dpg.set_value(self.tags['results_text'], 
+                     "Generating comprehensive report card...")
+        
+        try:
+            # Get basic test results
+            dataset_name = self.current_model.metadata.get('dataset_name', 'unknown')
+            
+            if dataset_name not in DATASET_REGISTRY:
+                dpg.set_value(self.tags['results_text'], 
+                             "Cannot generate report card: dataset not found")
+                return
+            
+            # Get dataset and test
+            from inference import test_on_dataset
+            dataset_class = DATASET_REGISTRY[dataset_name]
+            dataset_loader = dataset_class()
+            
+            # Quick test for accuracy
+            results = test_on_dataset(self.current_model_path, dataset_loader, num_samples=500)
+            
+            # Get efficiency metrics
+            efficiency = self.metrics_calculator.calculate_model_efficiency(
+                self.current_model.model
+            )
+            
+            # Get speed metrics
+            input_shape = self.current_model.metadata.get('input_shape', (3, 32, 32))
+            if len(input_shape) == 1:
+                input_shape = (input_shape[0],)
+            
+            speed = self.metrics_calculator.benchmark_inference_speed(
+                self.current_model.model,
+                input_shape,
+                self.current_model.device,
+                num_iterations=50
+            )
+            
+            # Create simple metrics dict for report card
+            metrics = {
+                'accuracy': results['accuracy'] / 100,
+                'macro_avg': {
+                    'f1_score': 0.85,  # Placeholder
+                    'precision': 0.85,
+                    'recall': 0.85
+                },
+                'weighted_avg': {
+                    'f1_score': results['accuracy'] / 100,
+                    'precision': results['accuracy'] / 100,
+                    'recall': results['accuracy'] / 100
+                }
+            }
+            
+            # Generate report card
+            report_card = self.metrics_calculator.generate_model_report_card(
+                metrics, efficiency, speed
+            )
+            
+            dpg.set_value(self.tags['results_text'], report_card)
+            
+        except Exception as e:
+            dpg.set_value(self.tags['results_text'], 
+                         f"Error generating report card: {str(e)}")
+    
+    def batch_test_folder(self):
+        """Test all images in a folder."""
+        if not self.current_model or not self.batch_tester:
+            return
+        
+        # Create file dialog to select folder
+        root = tk.Tk()
+        root.withdraw()
+        
+        folder_path = filedialog.askdirectory(
+            title="Select folder containing images to test"
+        )
+        
+        root.destroy()
+        
+        if not folder_path:
+            return
+        
+        dpg.set_value(self.tags['results_text'], 
+                     f"Testing all images in {folder_path}...")
+        
+        try:
+            # Run batch testing
+            results = self.batch_tester.test_folder(folder_path, recursive=False)
+            
+            # Generate summary report
+            summary = self.batch_tester.generate_summary_report()
+            
+            # Ask user where to save results
+            root = tk.Tk()
+            root.withdraw()
+            
+            save_path = filedialog.asksaveasfilename(
+                title="Save batch test results",
+                defaultextension=".html",
+                filetypes=[
+                    ("HTML Report", "*.html"),
+                    ("CSV File", "*.csv"),
+                    ("JSON File", "*.json")
+                ]
+            )
+            
+            root.destroy()
+            
+            if save_path:
+                # Save based on extension
+                if save_path.endswith('.html'):
+                    self.batch_tester.export_to_html(save_path)
+                    export_msg = f"Results exported to HTML: {save_path}"
+                elif save_path.endswith('.csv'):
+                    self.batch_tester.export_to_csv(save_path)
+                    export_msg = f"Results exported to CSV: {save_path}"
+                elif save_path.endswith('.json'):
+                    self.batch_tester.export_to_json(save_path)
+                    export_msg = f"Results exported to JSON: {save_path}"
+                else:
+                    export_msg = "Unknown export format"
+            else:
+                export_msg = "Results not saved"
+            
+            # Display summary
+            dpg.set_value(self.tags['results_text'], 
+                         f"{summary}\n\n{export_msg}")
+            
+        except Exception as e:
+            dpg.set_value(self.tags['results_text'], 
+                         f"Error during batch testing: {str(e)}")

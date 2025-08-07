@@ -148,15 +148,23 @@ class ExperimentDB:
             row = cursor.fetchone()
             return dict(row) if row else None
     
-    def get_runs(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get recent runs with pagination."""
+    def get_runs(self, limit: int = 50, offset: int = 0, status: str = None) -> List[Dict[str, Any]]:
+        """Get recent runs with pagination and optional status filter."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM runs 
-                ORDER BY timestamp DESC 
-                LIMIT ? OFFSET ?
-            """, (limit, offset))
+            if status:
+                cursor.execute("""
+                    SELECT * FROM runs 
+                    WHERE status = ?
+                    ORDER BY timestamp DESC 
+                    LIMIT ? OFFSET ?
+                """, (status, limit, offset))
+            else:
+                cursor.execute("""
+                    SELECT * FROM runs 
+                    ORDER BY timestamp DESC 
+                    LIMIT ? OFFSET ?
+                """, (limit, offset))
             return [dict(row) for row in cursor.fetchall()]
     
     def get_metrics(self, run_id: int) -> List[Dict[str, Any]]:
