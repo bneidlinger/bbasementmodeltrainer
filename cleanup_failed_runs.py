@@ -4,8 +4,16 @@ Utility script to clean up failed training runs and zombie processes.
 
 import os
 import sys
-import psutil
 import time
+
+# psutil may not be installed in some environments. Try to import and install if missing.
+try:
+    import psutil
+except ImportError:  # pragma: no cover - installation path
+    print("Installing psutil for process management...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
+    import psutil
 
 # Add trainer to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'trainer'))
@@ -155,13 +163,4 @@ def main():
         print("\nRecommendation: Restart ModelBuilder for a clean state")
 
 if __name__ == "__main__":
-    # Check if psutil is installed
-    try:
-        import psutil
-    except ImportError:
-        print("Installing psutil for process management...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
-        import psutil
-    
     main()
