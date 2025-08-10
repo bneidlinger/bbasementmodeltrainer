@@ -46,9 +46,16 @@ class ExperimentDB:
                     training_time REAL,  -- in seconds
                     status TEXT DEFAULT 'running',  -- running, completed, failed
                     notes TEXT,
-                    config TEXT  -- JSON string for additional config
+                    config TEXT,  -- JSON string for additional config
+                    pid INTEGER
                 )
             """)
+
+            # Add pid column if upgrading existing database
+            cursor.execute("PRAGMA table_info(runs)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if 'pid' not in columns:
+                cursor.execute("ALTER TABLE runs ADD COLUMN pid INTEGER")
             
             # Create datasets table
             cursor.execute("""
@@ -108,7 +115,7 @@ class ExperimentDB:
         """Update run information."""
         allowed_fields = {
             'train_loss', 'val_loss', 'val_acc', 'best_val_acc',
-            'training_time', 'status', 'notes'
+            'training_time', 'status', 'notes', 'pid'
         }
         
         # Filter out non-allowed fields
