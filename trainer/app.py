@@ -7,6 +7,7 @@ import time
 import os
 import sys
 from typing import Dict, Any, Optional
+import psutil
 
 # Add the trainer directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -386,6 +387,8 @@ class ModelBuilderApp:
             args=(config, self.message_queue)
         )
         self.training_process.start()
+        # Record process ID in database for later management
+        self.db.update_run(run_id, pid=self.training_process.pid)
         
         # Start monitoring thread
         self.is_training = True
@@ -627,13 +630,17 @@ class ModelBuilderApp:
         """Actually kill the training run and update database."""
         try:
             print(f"Killing run {run_id}...")  # Debug
-            
-            # Update database status FIRST
-            self.db.update_run(run_id, 
-                             status='failed', 
-                             notes='Manually killed by user')
+
+            run_info = self.db.get_run(run_id)
+            pid = run_info.get('pid') if run_info else None
+
+            # Update database status first and clear stored pid
+            self.db.update_run(run_id,
+                             status='failed',
+                             notes='Manually killed by user',
+                             pid=None)
             print(f"Database updated for run {run_id}")  # Debug
-            
+
             # Then check if this is the current running process
             if hasattr(self, 'current_run_id') and self.current_run_id == run_id:
                 print(f"Killing current process for run {run_id}")  # Debug
@@ -642,18 +649,29 @@ class ModelBuilderApp:
                     self.training_process.terminate()
                     # Don't wait too long
                     self.training_process.join(timeout=1)
-                    
+
                     # Force kill if still alive
                     if self.training_process.is_alive():
                         print(f"Force killing process for run {run_id}")  # Debug
                         self.training_process.kill()
-                
+
                 # Stop monitoring thread
                 self.is_training = False
-                
+
                 # Reset GUI
                 dpg.configure_item(self.tags['start_button'], enabled=True)
                 dpg.configure_item(self.tags['stop_button'], enabled=False)
+            elif pid:
+                # Kill external process if pid is known
+                try:
+                    proc = psutil.Process(pid)
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=1)
+                    except psutil.TimeoutExpired:
+                        proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
             
             # Close confirmation dialog
             if dpg.does_item_exist("kill_confirm_modal"):
@@ -776,11 +794,13 @@ class ModelBuilderApp:
     def confirm_kill_all_runs(self, stuck_runs):
         """Actually kill all stuck runs."""
         killed_count = 0
-        
+
         for run in stuck_runs:
             try:
                 run_id = run['id']
-                
+                run_info = self.db.get_run(run_id)
+                pid = run_info.get('pid') if run_info else None
+
                 # Check if this is the current running process
                 if hasattr(self, 'current_run_id') and self.current_run_id == run_id:
                     # Kill the current training process
@@ -789,18 +809,29 @@ class ModelBuilderApp:
                         self.training_process.join(timeout=1)
                         if self.training_process.is_alive():
                             self.training_process.kill()
-                    
+
                     # Stop monitoring
                     self.is_training = False
-                    
+
                     # Reset GUI
                     dpg.configure_item(self.tags['start_button'], enabled=True)
                     dpg.configure_item(self.tags['stop_button'], enabled=False)
-                
+                elif pid:
+                    try:
+                        proc = psutil.Process(pid)
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=1)
+                        except psutil.TimeoutExpired:
+                            proc.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+
                 # Update database
-                self.db.update_run(run_id, 
+                self.db.update_run(run_id,
                                  status='failed',
-                                 notes='Batch killed - stuck process')
+                                 notes='Batch killed - stuck process',
+                                 pid=None)
                 killed_count += 1
                 
             except Exception as e:
