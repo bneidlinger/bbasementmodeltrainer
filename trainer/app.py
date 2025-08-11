@@ -30,6 +30,9 @@ class ModelBuilderApp:
         self.monitor_thread: Optional[threading.Thread] = None
         self.is_training = False
         
+        # Clean up any stuck runs on startup
+        self.cleanup_stuck_runs_on_startup()
+        
         # Training metrics for plotting
         self.epochs = []
         self.train_losses = []
@@ -60,6 +63,61 @@ class ModelBuilderApp:
             'val_acc_series': 'val_acc_series',
             'history_table': 'history_table'
         }
+    
+    def cleanup_stuck_runs_on_startup(self):
+        """Clean up any stuck runs from previous sessions on startup."""
+        try:
+            # Get all running runs
+            stuck_runs = self.db.get_runs(status='running')
+            
+            if stuck_runs:
+                print(f"[STARTUP] Found {len(stuck_runs)} stuck runs from previous session")
+                
+                # Kill any orphaned train_worker.py processes
+                if psutil:
+                    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                        try:
+                            cmdline = proc.info.get('cmdline', [])
+                            if cmdline and any('train_worker.py' in arg for arg in cmdline):
+                                print(f"[STARTUP] Killing orphaned train_worker.py process PID {proc.info['pid']}")
+                                proc.terminate()
+                                try:
+                                    proc.wait(timeout=1)
+                                except psutil.TimeoutExpired:
+                                    proc.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+                
+                # Mark all stuck runs as failed
+                for run in stuck_runs:
+                    run_id = run['id']
+                    pid = run.get('pid')
+                    
+                    # Try to kill by PID if available
+                    if pid:
+                        try:
+                            proc = psutil.Process(pid)
+                            print(f"[STARTUP] Killing process PID {pid} for run {run_id}")
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=1)
+                            except psutil.TimeoutExpired:
+                                proc.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    
+                    # Update database
+                    self.db.update_run(run_id,
+                                     status='failed',
+                                     notes='Automatically cleaned up on startup - previous session crashed',
+                                     pid=None)
+                    print(f"[STARTUP] Marked run #{run_id} as failed")
+                
+                print(f"[STARTUP] Cleanup complete - marked {len(stuck_runs)} runs as failed")
+        except Exception as e:
+            print(f"[STARTUP] Error during cleanup: {e}")
+            import traceback
+            traceback.print_exc()
         
     def setup_gui(self):
         """Initialize the Dear PyGui interface."""
@@ -633,15 +691,11 @@ class ModelBuilderApp:
 
             run_info = self.db.get_run(run_id)
             pid = run_info.get('pid') if run_info else None
+            
+            # First, try to kill any processes we can find
+            processes_killed = False
 
-            # Update database status first and clear stored pid
-            self.db.update_run(run_id,
-                             status='failed',
-                             notes='Manually killed by user',
-                             pid=None)
-            print(f"Database updated for run {run_id}")  # Debug
-
-            # Then check if this is the current running process
+            # Check if this is the current running process
             if hasattr(self, 'current_run_id') and self.current_run_id == run_id:
                 print(f"Killing current process for run {run_id}")  # Debug
                 # Kill the current training process
@@ -654,6 +708,7 @@ class ModelBuilderApp:
                     if self.training_process.is_alive():
                         print(f"Force killing process for run {run_id}")  # Debug
                         self.training_process.kill()
+                    processes_killed = True
 
                 # Stop monitoring thread
                 self.is_training = False
@@ -661,17 +716,46 @@ class ModelBuilderApp:
                 # Reset GUI
                 dpg.configure_item(self.tags['start_button'], enabled=True)
                 dpg.configure_item(self.tags['stop_button'], enabled=False)
-            elif pid:
-                # Kill external process if pid is known
+            
+            # Try to kill by stored PID
+            if pid:
                 try:
                     proc = psutil.Process(pid)
+                    print(f"Found process with PID {pid}, terminating...")
                     proc.terminate()
                     try:
                         proc.wait(timeout=1)
                     except psutil.TimeoutExpired:
+                        print(f"Process {pid} didn't terminate, force killing...")
                         proc.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+                    processes_killed = True
+                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                    print(f"Could not kill PID {pid}: {e}")
+            
+            # Also check for any orphaned train_worker.py processes
+            if psutil:
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    try:
+                        cmdline = proc.info.get('cmdline', [])
+                        if cmdline and any('train_worker.py' in arg for arg in cmdline):
+                            # Check if this process matches our run_id somehow
+                            # Since we can't directly match, kill all orphaned train_worker processes
+                            print(f"Found orphaned train_worker.py process PID {proc.info['pid']}, terminating...")
+                            proc.terminate()
+                            try:
+                                proc.wait(timeout=1)
+                            except psutil.TimeoutExpired:
+                                proc.kill()
+                            processes_killed = True
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+
+            # Always update database status regardless of whether we found processes
+            self.db.update_run(run_id,
+                             status='failed',
+                             notes='Manually killed by user',
+                             pid=None)
+            print(f"Database updated for run {run_id}")  # Debug
             
             # Close confirmation dialog
             if dpg.does_item_exist("kill_confirm_modal"):
@@ -794,6 +878,17 @@ class ModelBuilderApp:
     def confirm_kill_all_runs(self, stuck_runs):
         """Actually kill all stuck runs."""
         killed_count = 0
+        
+        # First, collect all orphaned train_worker.py processes
+        orphaned_processes = []
+        if psutil:
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = proc.info.get('cmdline', [])
+                    if cmdline and any('train_worker.py' in arg for arg in cmdline):
+                        orphaned_processes.append(proc)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
 
         for run in stuck_runs:
             try:
@@ -816,18 +911,21 @@ class ModelBuilderApp:
                     # Reset GUI
                     dpg.configure_item(self.tags['start_button'], enabled=True)
                     dpg.configure_item(self.tags['stop_button'], enabled=False)
-                elif pid:
+                
+                # Try to kill by stored PID
+                if pid:
                     try:
                         proc = psutil.Process(pid)
+                        print(f"Killing process with PID {pid} for run {run_id}")
                         proc.terminate()
                         try:
                             proc.wait(timeout=1)
                         except psutil.TimeoutExpired:
                             proc.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
+                    except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                        print(f"Could not kill PID {pid}: {e}")
 
-                # Update database
+                # Always update database regardless of process kill success
                 self.db.update_run(run_id,
                                  status='failed',
                                  notes='Batch killed - stuck process',
@@ -836,6 +934,18 @@ class ModelBuilderApp:
                 
             except Exception as e:
                 print(f"Error killing run {run['id']}: {e}")
+        
+        # Kill all orphaned train_worker.py processes
+        for proc in orphaned_processes:
+            try:
+                print(f"Killing orphaned train_worker.py process PID {proc.info['pid']}")
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1)
+                except psutil.TimeoutExpired:
+                    proc.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
         
         # Close confirmation dialog
         if dpg.does_item_exist("kill_all_confirm_modal"):

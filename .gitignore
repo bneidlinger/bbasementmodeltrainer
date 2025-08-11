@@ -13,6 +13,7 @@ venv.bak/
 dist/
 build/
 *.egg
+.pyc
 
 # Virtual Environment
 venv/
@@ -21,26 +22,46 @@ Include/
 Lib/
 pyvenv.cfg
 
-# PyTorch Models
+# PyTorch Models & Checkpoints
 *.pth
 *.pt
+*.ckpt
+*.safetensors
 saved_models/
 checkpoints/
 runs/
+model_cache/
 
 # Datasets
 data/cache/
 data/downloads/
+datasets/
+formatted_datasets/
 *.tar.gz
 *.zip
+*.7z
 MNIST/
 CIFAR*/
 FashionMNIST/
+arxiv_cache/
+reddit_cache/
+web_cache/
+
+# LLM Specific
+*.bin
+*.gguf
+*.ggml
+huggingface/
+.cache/
+transformers_cache/
+models--*/
+danger_logs/
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
+experiments.db
 
 # IDE
 .vscode/
@@ -50,6 +71,7 @@ FashionMNIST/
 *~
 .project
 .pydevproject
+*.sublime-*
 
 # OS
 .DS_Store
@@ -59,12 +81,14 @@ FashionMNIST/
 .Trashes
 ehthumbs.db
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
 logs/
 *.out
 *.err
+training_logs/
 
 # Testing
 .pytest_cache/
@@ -72,30 +96,38 @@ logs/
 htmlcov/
 .tox/
 .nox/
+coverage.xml
+*.cover
 
-# Documentation
+# Documentation  
 docs/_build/
 site/
+*.rst~
 
 # Package files
 *.tar
 *.gz
 *.bz2
 *.xz
+*.whl
 
 # Temporary files
 *.tmp
 *.temp
 *.bak
 .cache/
+tmp/
+temp/
 
-# Screenshots and images for testing
-screenshot.png
-test_image.png
+# Media files (keep some for docs)
 *.jpg
 *.jpeg
 *.gif
 *.bmp
+*.mp4
+*.avi
+# Keep screenshot.png for documentation
+!screenshot.png
 
 # Jupyter
 .ipynb_checkpoints/
@@ -105,9 +137,49 @@ test_image.png
 *.spec
 dist/
 build/
+*.manifest
+*.exe
 
-# Other
+# Environment & Config
 .env
 .env.local
+.env.*.local
 secrets.json
 config.local.json
+*.key
+*.pem
+
+# Data Processing
+*.jsonl
+*.parquet
+*.arrow
+*.feather
+*.csv
+!sample_data.csv
+
+# Scraped Data
+scraped_data/
+raw_data/
+processed_data/
+cleaned_data/
+
+# Model Outputs
+generation_outputs/
+inference_results/
+predictions/
+
+# Profiling
+*.prof
+*.lprof
+profile_output/
+
+# System
+*.pid
+*.lock
+.~lock*
+
+# Custom
+experiments_backup.db
+old_runs/
+deprecated/
+test_outputs/

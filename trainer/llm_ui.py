@@ -391,7 +391,7 @@ class LLMTrainingUI:
             
             dpg.add_button(
                 label="[L] Load Model",
-                callback=self._load_model,
+                callback=self._load_selected_model,
                 width=150,
                 height=40
             )
